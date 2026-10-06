@@ -1,0 +1,31 @@
+---
+title: "What if the UK used a different voting system?"
+author: "Oliver Porter"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+
+ge2024_raw = read_csv("data/HoC-GE2024-results-by-constituency.csv")
+
+names(ge2024_raw)   # check the real column names first
+
+ge2024 = ge2024_raw %>%
+  pivot_longer(
+    cols = Con:`All other candidates`,   # the party vote columns
+    names_to = "party",
+    values_to = "votes"
+  ) %>%
+  mutate(election = 2024)
+```
+
+You can add options to executable code like this
+
+```{r}
+#| echo: false
+2 * 2
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).
