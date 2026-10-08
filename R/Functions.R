@@ -4,10 +4,10 @@ library(tidyr)
 # 1. The D'Hondt function
 # votes: named vector of votes, seats: number to share out,
 # threshold: minimum vote share needed to win seats
-dhondt = function(votes, seats, threshold = 0)
+dhondt = function(votes, seats, threshold = 0, total)
   {
   eligible = data.frame(party = names(votes), votes = votes) %>%
-    filter(votes / sum(votes) >= threshold)
+    filter(votes / total >= threshold)
   quotients = NULL
   for (k in 1:seats)
     {
@@ -39,7 +39,7 @@ fptp = function(data, parties)
 netherlands_style = function(data, parties, seats = nrow(data))
   {
   national_votes = colSums(data[, parties], na.rm = TRUE)
-  dhondt(national_votes, seats = seats, threshold = 1 / seats)
+  dhondt(national_votes, seats = seats, threshold = 1 / seats, total = sum(data[["Valid votes"]]))
   }
 
 # 4. Croatia-style: D'Hondt within each region, with a 5% threshold.
@@ -54,7 +54,7 @@ croatia_style = function(data, parties, region_col = "Region name",
     regional_votes = colSums(region_data[, parties], na.rm = TRUE)
     region_seats = rbind(region_seats,
                          dhondt(regional_votes, seats = nrow(region_data),
-                                threshold = threshold))
+                                threshold = threshold, total = sum(region_data[["Valid votes"]])))
     }
   seat_tab = region_seats %>%
     group_by(party) %>%
