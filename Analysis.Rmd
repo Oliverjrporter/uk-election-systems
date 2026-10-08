@@ -6,30 +6,201 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, comment = NA, message = FALSE, warning = FALSE)
 ```
 
-## R Markdown
+## Introduction
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+This analysis applies three seat allocation rules to the constituency results of the 2024 UK General Election: first past the post (FPTP), a Netherlands-style single national list, and a Croatia-style regional list with a 5% threshold. It is a mechanical recount of the votes as they were cast. Voters, parties and candidates would be likely to behave differently under another system, so the results show what the same votes would produce under each rule, not what would have happened in an election held under it.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+## Setup
 
-```{r cars}
+```{r}
 library(tidyverse)
+source("functions.R")   # dhondt, fptp, netherlands_style, croatia_style
 
 ge2024_raw = read_csv("data/HoC-GE2024-results-by-constituency.csv")
-
-names(ge2024_raw)
-
 ```
 
-## Including Plots
+## 1. Data preparation
 
-You can also embed plots, for example:
+```{r}
+named = c("Con", "Lab", "LD", "RUK", "Green", "SNP", "PC",
+          "DUP", "SF", "SDLP", "UUP", "APNI")
+fptp_parties = c(named, "Of which other winner")
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+ge2024 = ge2024_raw %>%
+  select(-`County name`, -`Declaration time`)
+
+# Checks: one row per constituency, and party votes add up to valid votes
+stopifnot(nrow(ge2024) == 650, !any(duplicated(ge2024$`ONS ID`)))
+stopifnot(all(rowSums(ge2024[, c(named, "All other candidates")]) ==
+                ge2024$`Valid votes`))
+
+total_seats = nrow(ge2024)
+total_valid = sum(ge2024$`Valid votes`)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+The two columns that are empty for every constituency (County name and Declaration time) are dropped. The remaining column names are left unchanged because the functions refer to them directly. Party votes sum exactly to valid votes in all `r total_seats` constituencies, so no further correction is needed.
+
+"All other candidates" combines several independents and small parties, so it is not treated as a party in any system. Under FPTP the column "Of which other winner" is used instead, which holds the votes of a single winning candidate outside the twelve named parties. Under the two list systems only the named parties can win seats, but the thresholds are measured against all valid votes.
+
+## 2. Seats under each system
+
+```{r}
+fptp_res = fptp(ge2024, fptp_parties)
+nl_res = netherlands_style(ge2024, named)
+hr_res = croatia_style(ge2024, named)
+
+systems = c("FPTP", "Netherlands-style", "Croatia-style")
+
+seats_all = bind_rows(
+  mutate(fptp_res, system = "FPTP"),
+  mutate(nl_res, system = "Netherlands-style"),
+  mutate(hr_res, system = "Croatia-style")
+) %>%
+  mutate(
+    party = recode(party, "Of which other winner" = "Other"),
+    system = factor(system, levels = systems)
+  )
+
+vote_share = tibble(
+  party = c(named, "Other"),
+  votes = c(colSums(ge2024[, named]), sum(ge2024$`All other candidates`))
+) %>%
+  mutate(vote_share = 100 * votes / sum(votes))
+
+comparison = seats_all %>%
+  complete(party, system, fill = list(seats = 0)) %>%
+  left_join(vote_share, by = "party") %>%
+  mutate(
+    seat_share = 100 * seats / total_seats,
+    diff = seat_share - vote_share
+  )
+
+seat_tab = comparison %>%
+  select(party, vote_share, system, seats) %>%
+  pivot_wider(names_from = system, values_from = seats) %>%
+  arrange(desc(vote_share))
+
+knitr::kable(seat_tab, digits = 1,
+             col.names = c("Party", "Vote share (%)", systems),
+             caption = "Table 1: Seats won by each party under the three systems.")
+```
+
+```{r}
+lab_seats = comparison %>% filter(party == "Lab") %>% arrange(system) %>% pull(seats)
+majority_line = floor(total_seats / 2) + 1
+biggest_change = comparison %>%
+  filter(system != "FPTP") %>%
+  left_join(
+    comparison %>% filter(system == "FPTP") %>% select(party, fptp_seats = seats),
+    by = "party"
+  ) %>%
+  mutate(change = seats - fptp_seats) %>%
+  slice_max(abs(change), n = 1, with_ties = FALSE)
+```
+
+Under FPTP the largest party, Labour, wins `r lab_seats[1]` seats on `r round(vote_share$vote_share[vote_share$party == "Lab"], 1)`% of the vote, above the `r majority_line` needed for a majority. Under the Netherlands-style and Croatia-style systems the same votes give `r lab_seats[2]` and `r lab_seats[3]` seats, so no party reaches a majority under either. The two list systems give similar results to each other for every party, with the largest difference between them being `r max(abs(seat_tab[["Netherlands-style"]] - seat_tab[["Croatia-style"]]))` seats.
+
+```{r}
+comparison %>%
+  filter(vote_share > 2) %>%
+  ggplot(aes(x = reorder(party, -vote_share), y = seat_share, fill = system)) +
+  geom_col(position = "dodge") +
+  geom_errorbar(aes(ymin = vote_share, ymax = vote_share), width = 0.9) +
+  geom_hline(yintercept = 50, linetype = "dashed") +
+  scale_fill_brewer(palette = "Dark2") +
+  theme_bw() +
+  labs(x = "Party", y = "Share of seats (%)", fill = "System",
+       title = "Seat share under each system compared with vote share",
+       subtitle = "Black lines: national vote share. Dashed line: majority of seats.")
+```
+
+Under the two list systems each party's seat share is close to its national vote share. Under FPTP the two differ more, in both directions: parties whose votes are concentrated in particular constituencies win a larger share of seats than votes, and parties whose votes are spread evenly across many constituencies win a smaller share. This follows from how the rule works, since FPTP counts constituency winners and the list systems count total votes.
+
+## 3. Measuring the difference between votes and seats
+
+To summarise the gap between vote shares and seat shares in a single number, we use the Gallagher index, $G = \sqrt{\frac{1}{2}\sum_i (v_i - s_i)^2}$, where $v_i$ and $s_i$ are each party's percentage of votes and seats. A value of 0 means seat shares match vote shares exactly.
+
+```{r}
+gallagher_tab = comparison %>%
+  group_by(system) %>%
+  summarise(
+    gallagher = sqrt(sum(diff^2) / 2),
+    largest_party = party[which.max(seats)],
+    largest_seats = max(seats),
+    parties_with_seats = sum(seats > 0),
+    .groups = "drop"
+  )
+
+knitr::kable(gallagher_tab, digits = 2,
+             col.names = c("System", "Gallagher index", "Largest party",
+                           "Seats", "Parties winning seats"),
+             caption = "Table 2: Gallagher index and summary of each system.")
+```
+
+The Gallagher index is `r round(gallagher_tab$gallagher[gallagher_tab$system == "FPTP"], 1)` under FPTP, `r round(gallagher_tab$gallagher[gallagher_tab$system == "Netherlands-style"], 1)` under the Netherlands-style system and `r round(gallagher_tab$gallagher[gallagher_tab$system == "Croatia-style"], 1)` under the Croatia-style system. The Croatia-style figure is slightly higher than the Netherlands-style one because seats are shared out within each of the twelve regions, so rounding happens twelve times, and the 5% threshold applies in each region. Neither list system reaches 0, partly because votes for other candidates (`r round(vote_share$vote_share[vote_share$party == "Other"], 1)`% nationally) cannot win seats in this analysis.
+
+The index measures one property only. Electoral systems are also compared on other criteria that it does not capture, such as the link between an MP and a single constituency, how often one party can govern alone, how coalitions are formed, and how simple the ballot is. This analysis does not weigh those criteria against each other.
+
+## 4. Map of FPTP winners
+
+```{r, fig.width = 9, fig.height = 8}
+library(sf)
+library(patchwork)
+party_cols = c(Con = "#0087DC", Lab = "#E4003B", LD = "#FAA61A", RUK = "#12B6CF",
+               Green = "#02A95B", SNP = "#FDF38E", PC = "#005B54", DUP = "#D46A4C",
+               SF = "#326760", SDLP = "#2AA82C", UUP = "#48A5EE", APNI = "#F6CB2F",
+               Other = "grey60")
+
+boundaries_sf = read_sf("data/boundaries/PCON_JULY_2024_UK_BUC.shp")
+
+winners_map = boundaries_sf %>%
+  left_join(ge2024, by = c("PCON24CD" = "ONS ID")) %>%
+  mutate(
+    winner = if_else(`First party` %in% names(party_cols), `First party`, "Other"),
+    winner = factor(winner, levels = names(party_cols))
+  )
+seat_counts = winners_map %>%
+  st_drop_geometry() %>%
+  count(winner, sort = TRUE)
+seat_labels = setNames(paste0(seat_counts$winner, " (", seat_counts$n, ")"),
+                       seat_counts$winner)
+
+map_theme = theme_void() +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    plot.subtitle = element_text(size = 9, colour = "grey30"),
+    legend.title = element_text(face = "bold", size = 10),
+    legend.text = element_text(size = 9),
+    legend.key.size = unit(0.45, "cm")
+  )
+
+p_uk = ggplot(winners_map, aes(fill = winner)) +
+  geom_sf(colour = "white", linewidth = 0.03) +
+  scale_fill_manual(values = party_cols,
+                    breaks = as.character(seat_counts$winner),
+                    labels = seat_labels) +
+  map_theme +
+  labs(fill = "Winner (seats)")
+
+p_london = winners_map %>%
+  filter(`Region name` == "London") %>%
+  ggplot(aes(fill = winner)) +
+  geom_sf(colour = "white", linewidth = 0.15) +
+  scale_fill_manual(values = party_cols, guide = "none") +
+  map_theme +
+  labs(subtitle = "London")
+
+p_uk + p_london +
+  plot_layout(widths = c(2.2, 1), guides = "collect") +
+  plot_annotation(
+    title = "Winning party by constituency under FPTP, 2024",
+    subtitle = "Area on the map reflects land, not voters: each constituency is one seat.",
+    theme = map_theme
+  )
+```
+## Summary
+
+Applied to the 2024 votes, FPTP gives a single-party majority, while both list systems give no party a majority and seat shares close to national vote shares. The two list systems differ from each other only slightly, with regional allocation and the 5% threshold accounting for the gap. These figures describe the mechanical effect of each rule on one set of votes; they do not predict how an election under a different system would have gone.
