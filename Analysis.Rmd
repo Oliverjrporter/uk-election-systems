@@ -2,7 +2,7 @@
 title: "What if the UK used a different voting system?"
 author: "Oliver Porter"
 date: "2026-10-06"
-output: html_document
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
@@ -46,37 +46,21 @@ The two columns that are empty for every constituency (County name and Declarati
 "All other candidates" combines several independents and small parties, so it is not treated as a party in any system. Under FPTP the column "Of which other winner" is used instead, which holds the votes of a single winning candidate outside the twelve named parties. Under the two list systems only the named parties can win seats, but the thresholds are measured against all valid votes.
 
 ## 2. Seats under each system
-
 ```{r}
 fptp_res = fptp(ge2024, fptp_parties)
 nl_res = netherlands_style(ge2024, named)
 hr_res = croatia_style(ge2024, named)
 
-systems = c("FPTP", "Netherlands-style", "Croatia-style")
+votes = c(colSums(ge2024[, named]), Other = sum(ge2024$`All other candidates`))
 
-seats_all = bind_rows(
-  mutate(fptp_res, system = "FPTP"),
-  mutate(nl_res, system = "Netherlands-style"),
-  mutate(hr_res, system = "Croatia-style")
-) %>%
-  mutate(
-    party = recode(party, "Of which other winner" = "Other"),
-    system = factor(system, levels = systems)
-  )
-
-vote_share = tibble(
-  party = c(named, "Other"),
-  votes = c(colSums(ge2024[, named]), sum(ge2024$`All other candidates`))
-) %>%
-  mutate(vote_share = 100 * votes / sum(votes))
-
-comparison = seats_all %>%
+comparison = bind_rows(FPTP = fptp_res, `Netherlands-style` = nl_res,
+                       `Croatia-style` = hr_res, .id = "system") %>%
+  mutate(party = recode(party, "Of which other winner" = "Other"),
+         system = fct_inorder(system)) %>%
   complete(party, system, fill = list(seats = 0)) %>%
-  left_join(vote_share, by = "party") %>%
-  mutate(
-    seat_share = 100 * seats / total_seats,
-    diff = seat_share - vote_share
-  )
+  mutate(vote_share = 100 * unname(votes[party]) / total_valid,
+         seat_share = 100 * seats / total_seats,
+         diff = seat_share - vote_share)
 
 seat_tab = comparison %>%
   select(party, vote_share, system, seats) %>%
@@ -84,7 +68,7 @@ seat_tab = comparison %>%
   arrange(desc(vote_share))
 
 knitr::kable(seat_tab, digits = 1,
-             col.names = c("Party", "Vote share (%)", systems),
+             col.names = c("Party", "Vote share (%)", levels(comparison$system)),
              caption = "Table 1: Seats won by each party under the three systems.")
 ```
 
