@@ -1,7 +1,7 @@
 ---
 title: "What if the UK used a different voting system?"
 author: "Oliver Porter"
-date: "2026-10-06"
+date: "2026-10-13"
 output: github_document
 ---
 
@@ -11,56 +11,35 @@ knitr::opts_chunk$set(echo = TRUE, comment = NA, message = FALSE, warning = FALS
 
 ## Introduction
 
-This analysis applies three seat allocation rules to the constituency results of the 2024 UK General Election: first past the post (FPTP), a Netherlands-style single national list, and a Croatia-style regional list with a 5% threshold. It is a mechanical recount of the votes as they were cast. Voters, parties and candidates would be likely to behave differently under another system, so the results show what the same votes would produce under each rule, not what would have happened in an election held under it.
+This analysis applies three seat allocation rules to the constituency results of UK General Elections: first past the post (FPTP), a Netherlands-style single national list, and a Croatia-style regional list with a 5% threshold. Sections 1 to 4 look at the 2024 election in detail, and section 5 repeats the comparison for 2015, 2017 and 2019. It is a mechanical recount of the votes as they were cast. Voters, parties and candidates would be likely to behave differently under another system, so the results show what the same votes would produce under each rule, not what would have happened in an election held under it.
 
 ## Setup
 
 ```{r}
 library(tidyverse)
-source("Functions.R")   # dhondt, fptp, netherlands_style, croatia_style
-
-ge2024_raw = read_csv("data/HoC-GE2024-results-by-constituency.csv")
+library(sf)
+library(patchwork)
+source("Functions.R")   # load_election, get_parties, dhondt, fptp,
+                        # netherlands_style, croatia_style, compare_systems, gallagher
 ```
 
 ## 1. Data preparation
 
 ```{r}
-named = c("Con", "Lab", "LD", "RUK", "Green", "SNP", "PC",
-          "DUP", "SF", "SDLP", "UUP", "APNI")
-fptp_parties = c(named, "Of which other winner")
-
-ge2024 = ge2024_raw %>%
-  select(-`County name`, -`Declaration time`)
-
-# Checks: one row per constituency, and party votes add up to valid votes
-stopifnot(nrow(ge2024) == 650, !any(duplicated(ge2024$`ONS ID`)))
-stopifnot(all(rowSums(ge2024[, c(named, "All other candidates")]) ==
-                ge2024$`Valid votes`))
-
+ge2024 = load_election(2024)
+named = get_parties(ge2024)
 total_seats = nrow(ge2024)
-total_valid = sum(ge2024$`Valid votes`)
+named
 ```
 
-The two columns that are empty for every constituency (County name and Declaration time) are dropped. The remaining column names are left unchanged because the functions refer to them directly. Party votes sum exactly to valid votes in all `r total_seats` constituencies, so no further correction is needed.
+`load_election()` reads the House of Commons Library results file, drops the two columns that are empty for every constituency (County name and Declaration time), and checks that there are `r total_seats` constituencies with no duplicates and that party votes add up to valid votes in every one. The party columns are found automatically as every numeric column that is not a total such as Electorate or Valid votes. Because the vote totals must match, a column wrongly treated as a party would stop the code.
 
-"All other candidates" combines several independents and small parties, so it is not treated as a party in any system. Under FPTP the column "Of which other winner" is used instead, which holds the votes of a single winning candidate outside the twelve named parties. Under the two list systems only the named parties can win seats, but the thresholds are measured against all valid votes.
+"All other candidates" combines several independents and small parties, so it is not treated as a party in any system. Under FPTP the column "Of which other winner" is used instead, which holds the votes of a single winning candidate outside the named parties. Under the two list systems only the named parties can win seats, but the thresholds are measured against all valid votes. `fptp()` also checks its winner against the official result in every constituency and stops if any differ.
 
 ## 2. Seats under each system
+
 ```{r}
-fptp_res = fptp(ge2024, fptp_parties)
-nl_res = netherlands_style(ge2024, named)
-hr_res = croatia_style(ge2024, named)
-
-votes = c(colSums(ge2024[, named]), Other = sum(ge2024$`All other candidates`))
-
-comparison = bind_rows(FPTP = fptp_res, `Netherlands-style` = nl_res,
-                       `Croatia-style` = hr_res, .id = "system") %>%
-  mutate(party = recode(party, "Of which other winner" = "Other"),
-         system = fct_inorder(system)) %>%
-  complete(party, system, fill = list(seats = 0)) %>%
-  mutate(vote_share = 100 * unname(votes[party]) / total_valid,
-         seat_share = 100 * seats / total_seats,
-         diff = seat_share - vote_share)
+comparison = compare_systems(ge2024)
 
 seat_tab = comparison %>%
   select(party, vote_share, system, seats) %>%
@@ -69,23 +48,16 @@ seat_tab = comparison %>%
 
 knitr::kable(seat_tab, digits = 1,
              col.names = c("Party", "Vote share (%)", levels(comparison$system)),
-             caption = "Table 1: Seats won by each party under the three systems.")
+             caption = "Table 1: Seats won by each party under the three systems, 2024.")
 ```
 
 ```{r}
-lab_seats = comparison %>% filter(party == "Lab") %>% arrange(system) %>% pull(seats)
+lab = comparison %>% filter(party == "Lab") %>% arrange(system)
 majority_line = floor(total_seats / 2) + 1
-biggest_change = comparison %>%
-  filter(system != "FPTP") %>%
-  left_join(
-    comparison %>% filter(system == "FPTP") %>% select(party, fptp_seats = seats),
-    by = "party"
-  ) %>%
-  mutate(change = seats - fptp_seats) %>%
-  slice_max(abs(change), n = 1, with_ties = FALSE)
+list_gap = max(abs(seat_tab[["Netherlands-style"]] - seat_tab[["Croatia-style"]]))
 ```
 
-Under FPTP the largest party, Labour, wins `r lab_seats[1]` seats on `r round(vote_share$vote_share[vote_share$party == "Lab"], 1)`% of the vote, above the `r majority_line` needed for a majority. Under the Netherlands-style and Croatia-style systems the same votes give `r lab_seats[2]` and `r lab_seats[3]` seats, so no party reaches a majority under either. The two list systems give similar results to each other for every party, with the largest difference between them being `r max(abs(seat_tab[["Netherlands-style"]] - seat_tab[["Croatia-style"]]))` seats.
+Under FPTP the largest party, Labour, wins `r lab$seats[1]` seats on `r round(lab$vote_share[1], 1)`% of the vote, above the `r majority_line` needed for a majority. Under the Netherlands-style and Croatia-style systems the same votes give `r lab$seats[2]` and `r lab$seats[3]` seats, so no party reaches a majority under either. The two list systems give similar results to each other for every party, with the largest difference between them being `r list_gap` seats.
 
 ```{r}
 comparison %>%
@@ -94,10 +66,9 @@ comparison %>%
   geom_col(position = "dodge") +
   geom_errorbar(aes(ymin = vote_share, ymax = vote_share), width = 0.9) +
   geom_hline(yintercept = 50, linetype = "dashed") +
-  scale_fill_brewer(palette = "Dark2") +
   theme_bw() +
   labs(x = "Party", y = "Share of seats (%)", fill = "System",
-       title = "Seat share under each system compared with vote share",
+       title = "Seat share under each system compared with vote share, 2024",
        subtitle = "Black lines: national vote share. Dashed line: majority of seats.")
 ```
 
@@ -108,83 +79,108 @@ Under the two list systems each party's seat share is close to its national vote
 To summarise the gap between vote shares and seat shares in a single number, we use the Gallagher index, $G = \sqrt{\frac{1}{2}\sum_i (v_i - s_i)^2}$, where $v_i$ and $s_i$ are each party's percentage of votes and seats. A value of 0 means seat shares match vote shares exactly.
 
 ```{r}
-gallagher_tab = comparison %>%
-  group_by(system) %>%
-  summarise(
-    gallagher = sqrt(sum(diff^2) / 2),
-    largest_party = party[which.max(seats)],
-    largest_seats = max(seats),
-    parties_with_seats = sum(seats > 0),
-    .groups = "drop"
-  )
+gallagher_tab = gallagher(comparison)
 
 knitr::kable(gallagher_tab, digits = 2,
              col.names = c("System", "Gallagher index", "Largest party",
-                           "Seats", "Parties winning seats"),
-             caption = "Table 2: Gallagher index and summary of each system.")
+                           "Seats", "Majority", "Parties winning seats"),
+             caption = "Table 2: Gallagher index and summary of each system, 2024.")
+
+g = setNames(gallagher_tab$gallagher, gallagher_tab$system)
+other_share = comparison %>% filter(party == "Other", system == "FPTP") %>% pull(vote_share)
 ```
 
-The Gallagher index is `r round(gallagher_tab$gallagher[gallagher_tab$system == "FPTP"], 1)` under FPTP, `r round(gallagher_tab$gallagher[gallagher_tab$system == "Netherlands-style"], 1)` under the Netherlands-style system and `r round(gallagher_tab$gallagher[gallagher_tab$system == "Croatia-style"], 1)` under the Croatia-style system. The Croatia-style figure is slightly higher than the Netherlands-style one because seats are shared out within each of the twelve regions, so rounding happens twelve times, and the 5% threshold applies in each region. Neither list system reaches 0, partly because votes for other candidates (`r round(vote_share$vote_share[vote_share$party == "Other"], 1)`% nationally) cannot win seats in this analysis.
+The Gallagher index is `r round(g["FPTP"], 1)` under FPTP, `r round(g["Netherlands-style"], 1)` under the Netherlands-style system and `r round(g["Croatia-style"], 1)` under the Croatia-style system. The Croatia-style figure is slightly higher than the Netherlands-style one because seats are shared out within each of the twelve regions, so rounding happens twelve times, and the 5% threshold applies in each region. Neither list system reaches 0, partly because votes for other candidates (`r round(other_share, 1)`% nationally) cannot win seats in this analysis.
 
 The index measures one property only. Electoral systems are also compared on other criteria that it does not capture, such as the link between an MP and a single constituency, how often one party can govern alone, how coalitions are formed, and how simple the ballot is. This analysis does not weigh those criteria against each other.
 
-## 4. Map of FPTP winners
+## 4. Map of FPTP winners, 2024
 
 ```{r, fig.width = 9, fig.height = 8}
-library(sf)
-library(patchwork)
 party_cols = c(Con = "#0087DC", Lab = "#E4003B", LD = "#FAA61A", RUK = "#12B6CF",
                Green = "#02A95B", SNP = "#FDF38E", PC = "#005B54", DUP = "#D46A4C",
                SF = "#326760", SDLP = "#2AA82C", UUP = "#48A5EE", APNI = "#F6CB2F",
                Other = "grey60")
 
-boundaries_sf = read_sf("data/boundaries/PCON_JULY_2024_UK_BUC.shp")
-
-winners_map = boundaries_sf %>%
+winners_map = read_sf("data/boundaries/PCON_JULY_2024_UK_BUC.shp") %>%
   left_join(ge2024, by = c("PCON24CD" = "ONS ID")) %>%
-  mutate(
-    winner = if_else(`First party` %in% names(party_cols), `First party`, "Other"),
-    winner = factor(winner, levels = names(party_cols))
-  )
-seat_counts = winners_map %>%
-  st_drop_geometry() %>%
-  count(winner, sort = TRUE)
-seat_labels = setNames(paste0(seat_counts$winner, " (", seat_counts$n, ")"),
-                       seat_counts$winner)
+  mutate(winner = if_else(`First party` %in% names(party_cols), `First party`, "Other"))
 
-map_theme = theme_void() +
-  theme(
-    plot.title = element_text(face = "bold", size = 13),
-    plot.subtitle = element_text(size = 9, colour = "grey30"),
-    legend.title = element_text(face = "bold", size = 10),
-    legend.text = element_text(size = 9),
-    legend.key.size = unit(0.45, "cm")
-  )
+seats = sort(table(winners_map$winner), decreasing = TRUE)
 
-p_uk = ggplot(winners_map, aes(fill = winner)) +
+uk_map = ggplot(filter(winners_map, `Region name` != "London"), aes(fill = winner)) +
   geom_sf(colour = "white", linewidth = 0.03) +
-  scale_fill_manual(values = party_cols,
-                    breaks = as.character(seat_counts$winner),
-                    labels = seat_labels) +
-  map_theme +
+  scale_fill_manual(values = party_cols, limits = names(seats),
+                    labels = paste0(names(seats), " (", seats, ")")) +
+  theme_void() +
   labs(fill = "Winner (seats)")
 
-p_london = winners_map %>%
-  filter(`Region name` == "London") %>%
-  ggplot(aes(fill = winner)) +
-  geom_sf(colour = "white", linewidth = 0.15) +
-  scale_fill_manual(values = party_cols, guide = "none") +
-  map_theme +
-  labs(subtitle = "London")
+london = filter(winners_map, `Region name` == "London")
+box = st_bbox(london)
 
-p_uk + p_london +
+london_map = ggplot(london, aes(fill = winner)) +
+  geom_sf(colour = "white", linewidth = 0.15, show.legend = FALSE) +
+  scale_fill_manual(values = party_cols) +
+  annotate("text", x = (box$xmin + box$xmax) / 2, y = box$ymax, label = "London",
+           vjust = -2) +
+  coord_sf(clip = "off") +
+  theme_void()
+
+uk_map + london_map +
   plot_layout(widths = c(2.2, 1), guides = "collect") +
-  plot_annotation(
-    title = "Winning party by constituency under FPTP, 2024",
-    subtitle = "Area on the map reflects land, not voters: each constituency is one seat.",
-    theme = map_theme
-  )
+  plot_annotation(title = "Winning party by constituency under FPTP, 2024",
+                  subtitle = "Area on the map reflects land, not voters: each constituency is one seat.")
 ```
+
+## 5. Four elections, three systems
+
+To see whether the 2024 pattern is typical, the same three rules are applied to the 2015, 2017 and 2019 results. Each file goes through the same loading checks, and each year keeps its own party columns, so parties that stood in different years are treated as separate parties rather than merged. The 2015 to 2019 elections used the constituency boundaries in place before 2024, so they are compared on seat totals rather than mapped.
+
+```{r}
+years = c(2015, 2017, 2019, 2024)
+
+all_results = NULL
+for (y in years)
+  {
+  data = load_election(y)
+
+  all_results = rbind(all_results, compare_systems(data) %>% mutate(year = y))
+  }
+
+by_year = gallagher(all_results)
+```
+
+```{r, fig.width = 7, fig.height = 4}
+ggplot(by_year, aes(x = year, y = gallagher, colour = system)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  scale_x_continuous(breaks = years) +
+  scale_colour_brewer(palette = "Dark2") +
+  expand_limits(y = 0) +
+  theme_bw() +
+  labs(x = "General election", y = "Gallagher index", colour = "System",
+       title = "Gap between vote shares and seat shares, 2015 to 2024",
+       subtitle = "0 = seat shares match vote shares exactly")
+```
+
+```{r}
+by_year %>%
+  mutate(result = paste0(largest_party, " ", largest_seats,
+                         if_else(majority, " (majority)", ""))) %>%
+  select(year, system, result) %>%
+  pivot_wider(names_from = system, values_from = result) %>%
+  knitr::kable(col.names = c("Election", levels(by_year$system)),
+               caption = "Table 3: Largest party and its seats under each system.")
+
+g_range = by_year %>%
+  group_by(system) %>%
+  summarise(low = min(gallagher), high = max(gallagher))
+fptp_majorities = sum(by_year$majority[by_year$system == "FPTP"])
+list_majorities = sum(by_year$majority[by_year$system != "FPTP"])
+```
+
+Across the four elections the Gallagher index under FPTP ranges from `r round(g_range$low[1], 1)` to `r round(g_range$high[1], 1)`, compared with `r round(g_range$low[2], 1)` to `r round(g_range$high[2], 1)` under the Netherlands-style system and `r round(g_range$low[3], 1)` to `r round(g_range$high[3], 1)` under the Croatia-style system. FPTP gives a single-party majority in `r fptp_majorities` of the `r length(years)` elections, while the two list systems give one in `r list_majorities` of `r 2 * length(years)` cases.
+
 ## Summary
 
-Applied to the 2024 votes, FPTP gives a single-party majority, while both list systems give no party a majority and seat shares close to national vote shares. The two list systems differ from each other only slightly, with regional allocation and the 5% threshold accounting for the gap. These figures describe the mechanical effect of each rule on one set of votes; they do not predict how an election under a different system would have gone.
+Applied to the 2024 votes, FPTP gives a single-party majority, while both list systems give no party a majority and seat shares close to national vote shares. The two list systems differ from each other only slightly, with regional allocation and the 5% threshold accounting for the gap. Across 2015 to 2024 the Gallagher index under FPTP ranges from `r round(g_range$low[1], 1)` to `r round(g_range$high[1], 1)`, against at most `r round(max(g_range$high[2:3]), 1)` under either list system. These figures describe the mechanical effect of each rule on one set of votes per election; they do not predict how an election under a different system would have gone.
