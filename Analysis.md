@@ -102,14 +102,40 @@ comparison %>%
   geom_col(position = "dodge") +
   geom_errorbar(aes(ymin = vote_share, ymax = vote_share), width = 0.9) +
   geom_hline(yintercept = 50, linetype = "dashed") +
+<<<<<<< HEAD
   annotate("text", x = Inf, y = 50, label = "Majority", hjust = 1.1, vjust = -0.5,
            size = 3.5, colour = "grey30") +
+=======
+>>>>>>> 8f35f49c92444be01ae28328c8c5fb8ae623c5ba
   theme_bw() +
   labs(x = "Party", y = "Share of seats (%)", fill = "System",
        title = "Seat share under each system compared with vote share, 2024",
        subtitle = "Black lines: national vote share. Dashed line: majority of seats.")
 ```
 
+<<<<<<< HEAD
+=======
+![](Analysis_files/figure-gfm/unnamed-chunk-5-1.png)<!-- -->
+
+``` r
+comparison %>%
+  filter(vote_share > 2) %>%
+  ggplot(aes(x = reorder(party, -vote_share), y = seat_share, fill = system)) +
+  geom_col(position = position_dodge(width = 0.9), width = 0.85) +
+  geom_errorbar(aes(ymin = vote_share, ymax = vote_share, linetype = "National vote share"),
+                width = 0.95, linewidth = 0.8) +
+  geom_hline(yintercept = 50, linetype = "dashed", colour = "grey40") +
+  annotate("text", x = Inf, y = 50, label = "Majority", hjust = 1.1, vjust = -0.5,
+           size = 3.5, colour = "grey30") +
+  scale_fill_manual(values = c("#D55E00", "#0072B2", "#56B4E9")) +
+  scale_linetype_manual(values = c("National vote share" = "solid")) +
+  guides(fill = guide_legend(order = 1)) +
+  theme_bw() +
+  labs(x = "Party", y = "Share of seats (%)", fill = "System", linetype = NULL,
+       title = "Seat share under each system compared with vote share, 2024")
+```
+
+>>>>>>> 8f35f49c92444be01ae28328c8c5fb8ae623c5ba
 ![](Analysis_files/figure-gfm/seat-share-chart-1.png)<!-- -->
 
 Under the two list systems each party’s seat share is close to its
@@ -164,6 +190,7 @@ between an MP and a single constituency, how often one party can govern
 alone, how coalitions are formed, and how simple the ballot is. This
 analysis does not weigh those criteria against each other.
 
+<<<<<<< HEAD
 ## 4. How much of the vote did winners need?
 
 Under FPTP a candidate needs more votes than any other candidate, not a
@@ -213,6 +240,47 @@ Only 96 of the 650 MPs elected in 2024 won at least half the votes in
 their constituency, and 54 won with less than a third. The lowest
 winning share was 26.7% in South West Norfolk. In most constituencies,
 more voters chose someone other than the winner than chose the winner.
+=======
+## 4. Map of FPTP winners, 2024
+
+``` r
+party_cols = c(Con = "#0087DC", Lab = "#E4003B", LD = "#FAA61A", RUK = "#12B6CF",
+               Green = "#02A95B", SNP = "#FDF38E", PC = "#005B54", DUP = "#D46A4C",
+               SF = "#326760", SDLP = "#2AA82C", UUP = "#48A5EE", APNI = "#F6CB2F",
+               Other = "grey60")
+
+winners_map = read_sf("data/boundaries/PCON_JULY_2024_UK_BUC.shp") %>%
+  left_join(ge2024, by = c("PCON24CD" = "ONS ID")) %>%
+  mutate(winner = if_else(`First party` %in% names(party_cols), `First party`, "Other"))
+
+seats = sort(table(winners_map$winner), decreasing = TRUE)
+
+uk_map = ggplot(filter(winners_map, `Region name` != "London"), aes(fill = winner)) +
+  geom_sf(colour = "white", linewidth = 0.03) +
+  scale_fill_manual(values = party_cols, limits = names(seats),
+                    labels = paste0(names(seats), " (", seats, ")")) +
+  theme_void() +
+  labs(fill = "Winner (seats)")
+
+london = filter(winners_map, `Region name` == "London")
+box = st_bbox(london)
+
+london_map = ggplot(london, aes(fill = winner)) +
+  geom_sf(colour = "white", linewidth = 0.15, show.legend = FALSE) +
+  scale_fill_manual(values = party_cols) +
+  annotate("text", x = (box$xmin + box$xmax) / 2, y = box$ymax, label = "London",
+           vjust = -2) +
+  coord_sf(clip = "off") +
+  theme_void()
+
+uk_map + london_map +
+  plot_layout(widths = c(2.2, 1), guides = "collect") +
+  plot_annotation(title = "Winning party by constituency under FPTP, 2024",
+                  subtitle = "Area on the map reflects land, not voters: each constituency is one seat.")
+```
+
+![](Analysis_files/figure-gfm/unnamed-chunk-7-1.png)<!-- -->
+>>>>>>> 8f35f49c92444be01ae28328c8c5fb8ae623c5ba
 
 ## 5. Four elections, three systems
 
@@ -228,8 +296,15 @@ rather than mapped.
 years = c(2015, 2017, 2019, 2024)
 
 all_results = NULL
+<<<<<<< HEAD
 for (y in years){
   data = load_election(y)
+=======
+for (y in years)
+  {
+  data = load_election(y)
+
+>>>>>>> 8f35f49c92444be01ae28328c8c5fb8ae623c5ba
   all_results = rbind(all_results, compare_systems(data) %>% mutate(year = y))
   }
 
@@ -249,7 +324,11 @@ ggplot(by_year, aes(x = year, y = gallagher, colour = system)) +
        subtitle = "0 = seat shares match vote shares exactly")
 ```
 
+<<<<<<< HEAD
 ![](Analysis_files/figure-gfm/unnamed-chunk-7-1.png)<!-- -->
+=======
+![](Analysis_files/figure-gfm/unnamed-chunk-9-1.png)<!-- -->
+>>>>>>> 8f35f49c92444be01ae28328c8c5fb8ae623c5ba
 
 ``` r
 by_year %>%
