@@ -78,7 +78,7 @@ Under the two list systems each party's seat share is close to its national vote
 
 ## 3. Measuring the difference between votes and seats
 
-To summarise the gap between vote shares and seat shares in a single number, we use the Gallagher index, $G = \sqrt{\frac{1}{2}\sum_i (v_i - s_i)^2}$, where $v_i$ and $s_i$ are each party's percentage of votes and seats. A value of 0 means seat shares match vote shares exactly.
+To summarise the gap between vote shares and seat shares in a single number, I the Gallagher index, $G = \sqrt{\frac{1}{2}\sum_i (v_i - s_i)^2}$, where $v_i$ and $s_i$ are each party's percentage of votes and seats. A value of 0 means seat shares match vote shares exactly.
 
 ```{r}
 gallagher_tab = gallagher(comparison)
@@ -100,12 +100,12 @@ The index measures one property only. Electoral systems are also compared on oth
 
 Under FPTP a candidate needs more votes than any other candidate, not a majority. This map shows the share of the vote won by the winner in each constituency in 2024.
 
-```{r map-win-share, fig.width = 9, fig.height = 8}
+```{r map-win-share}
 bands = c("Under 33%", "33% to 50%", "50% or more")
 
-results = ge2024 %>%
-  mutate(win_share = 100 * do.call(pmax, pick(all_of(c(named, "Of which other winner")))) /
-           `Valid votes`)
+results = ge2024
+results$win_share = 100 * apply(ge2024[, c(named, "Of which other winner")], 1, max) /
+  ge2024$`Valid votes`
 
 constituency_map = read_sf("data/boundaries/PCON_JULY_2024_UK_BUC.shp") %>%
   left_join(results, by = c("PCON24CD" = "ONS ID")) %>%
@@ -115,7 +115,7 @@ stopifnot(nrow(constituency_map) == total_seats, !anyNA(constituency_map$band))
 
 fill_scale = scale_fill_manual(values = c("red", "orange", "darkgreen"), limits = bands,
                                labels = paste0(bands, " (", table(constituency_map$band), " seats)"),
-                               name = "Winner's share\nof the vote")
+                               name = "Winner's share of the vote")
 
 uk_map = ggplot(filter(constituency_map, `Region name` != "London"), aes(fill = band)) +
   geom_sf(colour = "white", linewidth = 0.03) + fill_scale + theme_void()
@@ -153,7 +153,7 @@ for (y in years){
 by_year = gallagher(all_results)
 ```
 
-```{r, fig.width = 7, fig.height = 4}
+```{r}
 ggplot(by_year, aes(x = year, y = gallagher, colour = system)) +
   geom_line(linewidth = 1) +
   geom_point(size = 2.5) +
