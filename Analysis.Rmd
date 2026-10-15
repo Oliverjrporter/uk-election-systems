@@ -29,7 +29,6 @@ source("Functions.R")   # load_election, get_parties, dhondt, fptp,
 ge2024 = load_election(2024)
 named = get_parties(ge2024)
 total_seats = nrow(ge2024)
-named
 ```
 
 `load_election()` reads the House of Commons Library results file, drops the two columns that are empty for every constituency (County name and Declaration time), and checks that there are `r total_seats` constituencies with no duplicates and that party votes add up to valid votes in every one. The party columns are found automatically as every numeric column that is not a total such as Electorate or Valid votes. Because the vote totals must match, a column wrongly treated as a party would stop the code.
@@ -59,17 +58,20 @@ list_gap = max(abs(seat_tab[["Netherlands-style"]] - seat_tab[["Croatia-style"]]
 
 Under FPTP the largest party, Labour, wins `r lab$seats[1]` seats on `r round(lab$vote_share[1], 1)`% of the vote, above the `r majority_line` needed for a majority. Under the Netherlands-style and Croatia-style systems the same votes give `r lab$seats[2]` and `r lab$seats[3]` seats, so no party reaches a majority under either. The two list systems give similar results to each other for every party, with the largest difference between them being `r list_gap` seats.
 
-```{r}
+```{r seat-share-chart}
 comparison %>%
   filter(vote_share > 2) %>%
   ggplot(aes(x = reorder(party, -vote_share), y = seat_share, fill = system)) +
   geom_col(position = "dodge") +
   geom_errorbar(aes(ymin = vote_share, ymax = vote_share), width = 0.9) +
   geom_hline(yintercept = 50, linetype = "dashed") +
+  annotate("text", x = Inf, y = 50, label = "Majority", hjust = 1.1, vjust = -0.5,
+           size = 3.5, colour = "grey30") +
   theme_bw() +
   labs(x = "Party", y = "Share of seats (%)", fill = "System",
        title = "Seat share under each system compared with vote share, 2024",
        subtitle = "Black lines: national vote share. Dashed line: majority of seats.")
+
 ```
 
 Under the two list systems each party's seat share is close to its national vote share. Under FPTP the two differ more, in both directions: parties whose votes are concentrated in particular constituencies win a larger share of seats than votes, and parties whose votes are spread evenly across many constituencies win a smaller share. This follows from how the rule works, since FPTP counts constituency winners and the list systems count total votes.
@@ -94,43 +96,46 @@ The Gallagher index is `r round(g["FPTP"], 1)` under FPTP, `r round(g["Netherlan
 
 The index measures one property only. Electoral systems are also compared on other criteria that it does not capture, such as the link between an MP and a single constituency, how often one party can govern alone, how coalitions are formed, and how simple the ballot is. This analysis does not weigh those criteria against each other.
 
-## 4. Map of FPTP winners, 2024
+## 4. How much of the vote did winners need?
 
-```{r, fig.width = 9, fig.height = 8}
-party_cols = c(Con = "#0087DC", Lab = "#E4003B", LD = "#FAA61A", RUK = "#12B6CF",
-               Green = "#02A95B", SNP = "#FDF38E", PC = "#005B54", DUP = "#D46A4C",
-               SF = "#326760", SDLP = "#2AA82C", UUP = "#48A5EE", APNI = "#F6CB2F",
-               Other = "grey60")
+Under FPTP a candidate needs more votes than any other candidate, not a majority. This map shows the share of the vote won by the winner in each constituency in 2024.
 
-winners_map = read_sf("data/boundaries/PCON_JULY_2024_UK_BUC.shp") %>%
-  left_join(ge2024, by = c("PCON24CD" = "ONS ID")) %>%
-  mutate(winner = if_else(`First party` %in% names(party_cols), `First party`, "Other"))
+```{r map-win-share, fig.width = 9, fig.height = 8}
+bands = c("Under 33%", "33% to 50%", "50% or more")
 
-seats = sort(table(winners_map$winner), decreasing = TRUE)
+results = ge2024 %>%
+  mutate(win_share = 100 * do.call(pmax, pick(all_of(c(named, "Of which other winner")))) /
+           `Valid votes`)
 
-uk_map = ggplot(filter(winners_map, `Region name` != "London"), aes(fill = winner)) +
-  geom_sf(colour = "white", linewidth = 0.03) +
-  scale_fill_manual(values = party_cols, limits = names(seats),
-                    labels = paste0(names(seats), " (", seats, ")")) +
-  theme_void() +
-  labs(fill = "Winner (seats)")
+constituency_map = read_sf("data/boundaries/PCON_JULY_2024_UK_BUC.shp") %>%
+  left_join(results, by = c("PCON24CD" = "ONS ID")) %>%
+  mutate(band = cut(win_share, c(0, 100 / 3, 50, Inf), labels = bands, right = FALSE))
 
-london = filter(winners_map, `Region name` == "London")
-box = st_bbox(london)
+stopifnot(nrow(constituency_map) == total_seats, !anyNA(constituency_map$band))
 
-london_map = ggplot(london, aes(fill = winner)) +
-  geom_sf(colour = "white", linewidth = 0.15, show.legend = FALSE) +
-  scale_fill_manual(values = party_cols) +
-  annotate("text", x = (box$xmin + box$xmax) / 2, y = box$ymax, label = "London",
-           vjust = -2) +
-  coord_sf(clip = "off") +
-  theme_void()
+fill_scale = scale_fill_manual(values = c("red", "orange", "darkgreen"), limits = bands,
+                               labels = paste0(bands, " (", table(constituency_map$band), " seats)"),
+                               name = "Winner's share\nof the vote")
+
+uk_map = ggplot(filter(constituency_map, `Region name` != "London"), aes(fill = band)) +
+  geom_sf(colour = "white", linewidth = 0.03) + fill_scale + theme_void()
+
+box = st_bbox(filter(constituency_map, `Region name` == "London"))
+
+london_map = ggplot(filter(constituency_map, `Region name` == "London"), aes(fill = band)) +
+  geom_sf(colour = "white", linewidth = 0.15, show.legend = FALSE) + fill_scale + theme_void() +
+  annotate("text", x = (box$xmin + box$xmax) / 2, y = box$ymax, label = "London", vjust = -1) +
+  coord_sf(clip = "off")
 
 uk_map + london_map +
   plot_layout(widths = c(2.2, 1), guides = "collect") +
-  plot_annotation(title = "Winning party by constituency under FPTP, 2024",
+  plot_annotation(title = "Share of the vote won by each constituency's winner, 2024",
                   subtitle = "Area on the map reflects land, not voters: each constituency is one seat.")
+
+lowest = slice_min(st_drop_geometry(constituency_map), win_share)
 ```
+
+Only `r sum(constituency_map$win_share >= 50)` of the `r total_seats` MPs elected in 2024 won at least half the votes in their constituency, and `r sum(constituency_map$win_share < 100 / 3)` won with less than a third. The lowest winning share was `r round(lowest$win_share, 1)`% in `r lowest[["Constituency name"]]`. In most constituencies, more voters chose someone other than the winner than chose the winner.
 
 ## 5. Four elections, three systems
 
@@ -140,10 +145,8 @@ To see whether the 2024 pattern is typical, the same three rules are applied to 
 years = c(2015, 2017, 2019, 2024)
 
 all_results = NULL
-for (y in years)
-  {
+for (y in years){
   data = load_election(y)
-
   all_results = rbind(all_results, compare_systems(data) %>% mutate(year = y))
   }
 
